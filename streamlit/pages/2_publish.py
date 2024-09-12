@@ -110,7 +110,7 @@ def updateResource():
             session.sql('BEGIN TRANSACTION')
             dfControl.write.mode("append").save_as_table("{0}.{1}.{2}".format(RESOURCE_DB,RESOURCE_SCHEMA,RESOURCE_TABLE))
             #TASKS
-            result = session.sql("call CONFIG.SP_UPDATE_RESOURCES(\'{ddlTableToPublish}\')").collect()[0][0]
+            result = session.sql(f"call CONFIG.SP_UPDATE_RESOURCES(\'{ddlTableToPublish}\')").collect()[0][0]
             if result == 'FAILURE':
                 st.error(util.error_msg, icon='🚨')        
                 session.sql('ROLLBACK')
