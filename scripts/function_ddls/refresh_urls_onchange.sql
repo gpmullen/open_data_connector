@@ -1,7 +1,7 @@
 //this is intended to capture any updates as they occur on the resources table. i.e. data has been update in the base table
-CREATE OR REPLACE task core.refresh_updated_urls_task
+CREATE OR REPLACE task core.{0}_refresh_updated_urls_task
  SCHEDULE = 'USING CRON {1} America/Los_Angeles'
- WAREHOUSE = {0}
+ USER_TASK_MANAGED_INITIAL_WAREHOUSE_SIZE = 'XSMALL'
  AS
  EXECUTE IMMEDIATE
  $$
@@ -19,10 +19,10 @@ CREATE OR REPLACE task core.refresh_updated_urls_task
         FOR t IN dbs DO
              SYSTEM$LOG_INFO('Add database tables to update. DB Name: ' || t.db_name);
             IF (is_first) THEN
-                sql := 'SELECT LAST_ALTERED,table_catalog db_name, table_Schema schema_name, table_name FROM '||t.db_name||'.INFORMATION_SCHEMA."TABLES" WHERE schema_name <> \'INFORMATION_SCHEMA\' ';
+                sql := 'SELECT LAST_ALTERED,table_catalog db_name, table_Schema schema_name, table_name FROM '||t.db_name||'.INFORMATION_SCHEMA."TABLES" WHERE schema_name <> \'INFORMATION_SCHEMA\' and table_name = \'{0}\' ';
                 is_first := false;
             ELSE
-                sql := sql || ' UNION ALL SELECT LAST_ALTERED,table_catalog db_name, table_Schema schema_name, table_name FROM '||t.db_name||'.INFORMATION_SCHEMA."TABLES" WHERE schema_name <> \'INFORMATION_SCHEMA\'';
+                sql := sql || ' UNION ALL SELECT LAST_ALTERED,table_catalog db_name, table_Schema schema_name, table_name FROM '||t.db_name||'.INFORMATION_SCHEMA."TABLES" WHERE schema_name <> \'INFORMATION_SCHEMA\' and table_name = \'{0}\' ';
             END IF;
         END FOR;
         SYSTEM$LOG_INFO('End getting all tables that have been updated. Resulting SQL: ' || :sql);
@@ -36,6 +36,7 @@ CREATE OR REPLACE task core.refresh_updated_urls_task
                     where info_schema.db_name = core.resources.database_name
                     and info_schema.schema_name = core.resources.schema_name
                     and info_schema.table_name = core.resources.table_name
+                    and info_schema.table_name = \'{0}\'
                     and last_altered > dateadd(hours,-24,current_timestamp())
                     )';
         
@@ -43,7 +44,7 @@ CREATE OR REPLACE task core.refresh_updated_urls_task
         execute immediate :sql;
        
         --Unload all files that are in the resouces_Stream and publish to CKAN
-        CALL CONFIG.SP_UPDATE_RESOURCES();
+        CALL CONFIG.SP_UPDATE_RESOURCES('{0}');
     EXCEPTION
     WHEN OTHER THEN
         let err string := SQLERRM;
@@ -54,5 +55,5 @@ CREATE OR REPLACE task core.refresh_updated_urls_task
     END;
 $$;
 
-GRANT ALL ON TASK core.refresh_updated_urls_task TO APPLICATION ROLE ckan_app_role;
-alter task core.refresh_updated_urls_task resume;    
+GRANT ALL ON TASK core.{0}_refresh_updated_urls_task TO APPLICATION ROLE ckan_app_role;
+alter task core.{0}_refresh_updated_urls_task resume;    

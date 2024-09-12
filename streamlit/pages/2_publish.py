@@ -5,6 +5,7 @@ import util as util
 from datetime import datetime
 import logging
 import time
+from cron_descriptor import get_description
 
 session = get_active_session()
 logger = logging.getLogger("python_logger")
@@ -109,13 +110,14 @@ def updateResource():
             session.sql('BEGIN TRANSACTION')
             dfControl.write.mode("append").save_as_table("{0}.{1}.{2}".format(RESOURCE_DB,RESOURCE_SCHEMA,RESOURCE_TABLE))
             #TASKS
-            result = session.sql("call CONFIG.SP_UPDATE_RESOURCES()").collect()[0][0]
+            result = session.sql("call CONFIG.SP_UPDATE_RESOURCES(\'{ddlTableToPublish}\')").collect()[0][0]
             if result == 'FAILURE':
                 st.error(util.error_msg, icon='🚨')        
                 session.sql('ROLLBACK')
             else:
                 session.sql('COMMIT TRANSACTION')
                 st.success('Saved!', icon="✅")
+                createTasks()
             
     except Exception as ex:
         logger.error(ex)
@@ -165,6 +167,19 @@ def populateCompressionOptions():
     else:
         return ['gzip','bz2','brotli','zstd','deflate','raw_deflate','None']
 
+#
+# add createtasks
+#
+
+def createTasks():
+
+        try:
+            _ = session.sql(f'call config.create_vwh_objects_tname(\'{ddlTableToPublish}\',\'{cron}\')').collect()
+        except:
+            st.error('Task Creation failed. Check that permissions are granted.')
+            st.error(util.error_msg)
+
+
 st.header('Publish Resources')
 st.info('Use the drop downs to select the Package and Resources to map a table to.')
 st.warning('You must already have created the package and resource in the Open Data.')
@@ -191,9 +206,30 @@ else:
                 txtFileAlias = st.text_input('File Alias (without extension)', help='This will be the name of the file in CKAN without extension', key='txtFileAlias')            
                 rdoOutputType = st.radio("File Type", options=['csv','json','parquet'], key='rdoOutputType',horizontal=True)
                 rdoCompress = st.radio("Compression",options=populateCompressionOptions(), key='rdoCompress',horizontal=True)
-                
+
+            
+            with st.expander("CRON Configuration"):
+                col_cron,col_secs,col_mins,col_hour,col_dayMo,col_month,col_dayWeek = st.columns(7)
+                st.info("Data is refreshed to CKAN based on this interval. The default setting is 11PM daily.")
+            with col_mins:
+                col_mins=st.text_input("minutes", value="0", key="mins")
+            with col_hour:
+                col_hour=st.text_input("hours", value="23", key="hour")
+            with col_dayMo:
+                col_dayMo=st.text_input("day of month", value="*", key="day")
+            with col_month:
+                col_month=st.text_input("month", value="*", key="month")
+            with col_dayWeek:
+                col_dayWeek=st.text_input("day of week", value="*", key="dayweek")
+            cron=f'{col_mins} {col_hour} {col_dayMo} {col_month} {col_dayWeek}'
+            st.write('Refresh task runs at: ' + get_description(f'{col_mins} {col_hour} {col_dayMo} {col_month} {col_dayWeek}'))
+
+              
             col1,col2 = st.columns(2)
             with col1:
                 btnPublish = st.button("Publish", on_click=updateResource, type='primary',help='Publishes the data set to the portal.')
             with col2:
                 btnTableRefresh = st.button("Refresh Tables", on_click=loadTables, type='secondary', help='If you have added permissions to a new table, press this button to refresh the list of database tables in the drop down lists.')
+
+
+

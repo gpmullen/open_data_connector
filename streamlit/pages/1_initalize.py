@@ -40,34 +40,34 @@ def createTasks():
     if 'vwh' in st.session_state:
         vwh = st.session_state.vwh
         try:
-            _ = session.sql(f'call config.create_vwh_objects(\'{vwh}\',\'{cron}\')').collect()
+            _ = session.sql(f'call config.create_vwh_objects(\'{vwh}\')').collect()
             st.session_state.vwh_submitted = True
         except:
             st.error('Task Creation failed. Check the name of your virtual warehouse and that permissions are granted.')
             st.session_state.vwh_submitted = False
 
 check_integration()
-st.header('Step 1 of 4: Create Tasks')
+st.header('Step 1 of 4: Choose Virtual Warehouse and Create Weekly Task')
 st.info('Tasks require a Virtual Warehouse (VWH) to run on a regular basis. Please input the name of a VWH to use for ongoing tasks. This VWH can be a shared resource. An XS VWH is recommended. These tasks automate updates to CKAN as changes occur.')
 
 vwh = st.text_input("Name of VWH", key='vwh')
 
 
-with st.expander("CRON Configuration (Optional)"):
-    col_cron,col_secs,col_mins,col_hour,col_dayMo,col_month,col_dayWeek = st.columns(7)
-    st.info("Data is refreshed to CKAN based on this interval. The default setting is 11PM daily.")
-    with col_mins:
-        col_mins=st.text_input("minutes", value="0", key="mins")
-    with col_hour:
-        col_hour=st.text_input("hours", value="23", key="hour")
-    with col_dayMo:
-        col_dayMo=st.text_input("day of month", value="*", key="day")
-    with col_month:
-        col_month=st.text_input("month", value="*", key="month")
-    with col_dayWeek:
-        col_dayWeek=st.text_input("day of week", value="*", key="dayweek")
-    cron=f'{col_mins} {col_hour} {col_dayMo} {col_month} {col_dayWeek}'
-    st.write('Refresh task runs at: ' + get_description(f'{col_mins} {col_hour} {col_dayMo} {col_month} {col_dayWeek}'))
+#with st.expander("CRON Configuration (Optional)"):
+#    col_cron,col_secs,col_mins,col_hour,col_dayMo,col_month,col_dayWeek = st.columns(7)
+#    st.info("Data is refreshed to CKAN based on this interval. The default setting is 11PM daily.")
+#    with col_mins:
+#        col_mins=st.text_input("minutes", value="0", key="mins")
+#    with col_hour:
+#        col_hour=st.text_input("hours", value="23", key="hour")
+#    with col_dayMo:
+#        col_dayMo=st.text_input("day of month", value="*", key="day")
+#    with col_month:
+#        col_month=st.text_input("month", value="*", key="month")
+#    with col_dayWeek:
+#        col_dayWeek=st.text_input("day of week", value="*", key="dayweek")
+#    cron=f'{col_mins} {col_hour} {col_dayMo} {col_month} {col_dayWeek}'
+#    st.write('Refresh task runs at: ' + get_description(f'{col_mins} {col_hour} {col_dayMo} {col_month} {col_dayWeek}'))
 
 if util.is_task_configured():
     st.success('Tasks created', icon='✅')
@@ -118,6 +118,7 @@ if util.is_key_configured():
             st.code(f"""        
     GRANT USAGE,OPERATE ON WAREHOUSE compute_wh TO APPLICATION {app_name};
     GRANT EXECUTE TASK ON ACCOUNT TO APPLICATION {app_name};
+    GRANT EXECUTE MANAGED TASK ON ACCOUNT TO APPLICATION {app_name};
 
     CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION ckan_apis_access_integration
     ALLOWED_NETWORK_RULES = ({app_name}.CONFIG.EXTERNAL_ACCESS_RULE)

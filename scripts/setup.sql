@@ -83,7 +83,7 @@ def create_function(session, external_access_object, filename, ckan_url):
 $$;
 GRANT USAGE ON PROCEDURE CONFIG.FINALIZE(string, string) to application role ckan_app_role;
 
-CREATE OR REPLACE PROCEDURE CONFIG.create_vwh_objects(vwh string, cron string)
+CREATE OR REPLACE PROCEDURE CONFIG.create_vwh_objects(vwh string)
 returns string
 LANGUAGE PYTHON
 RUNTIME_VERSION = '3.10'
@@ -93,21 +93,50 @@ AS
 $$
 import os
 
-def create_functions(session, vwh, cron):
-    files = ['refresh_urls_task.sql','refresh_urls_onchange.sql']
+def create_functions(session, vwh,):
+    files = ['refresh_urls_task.sql']
     for f in files:
-      create_function(session,vwh, cron,'/scripts/function_ddls/' + f)
+      create_function(session,vwh,'/scripts/function_ddls/' + f)
     return "VWH Dependent objects complete"
 
-def create_function(session, vwh, cron, filename):
+def create_function(session, vwh, filename):
     file = session.file.get_stream(filename)
     create_function_ddl = file.read(-1).decode("utf-8")
-    create_function_ddl = create_function_ddl.format(vwh,cron)
+
+    create_function_ddl = create_function_ddl.format(vwh)
     session.sql("begin " + create_function_ddl + " end;").collect()
     return f'{filename} created'       
 $$;
 
-GRANT USAGE ON PROCEDURE CONFIG.create_vwh_objects(string,string) to application role ckan_app_role;
+GRANT USAGE ON PROCEDURE CONFIG.create_vwh_objects(string) to application role ckan_app_role;
+
+CREATE OR REPLACE PROCEDURE CONFIG.create_vwh_objects_tname(tname string, cron string)
+returns string
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.10'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'create_functions'
+AS
+$$
+import os
+
+def create_functions(session,tname,cron):
+    files = ['refresh_urls_onchange.sql']
+    for f in files:
+      create_function(session,tname, cron,'/scripts/function_ddls/' + f)
+    return "VWH Dependent objects complete"
+
+def create_function(session, tname, cron, filename):
+    file = session.file.get_stream(filename)
+    create_function_ddl = file.read(-1).decode("utf-8")
+
+    create_function_ddl = create_function_ddl.format(tname,cron)
+    session.sql("begin " + create_function_ddl + " end;").collect()
+    return f'{filename} created'       
+$$;
+
+GRANT USAGE ON PROCEDURE CONFIG.create_vwh_objects_tname(string,string) to application role ckan_app_role;
+
 CREATE OR REPLACE FUNCTION config.add_quotes(object_name string)
 RETURNS STRING
 LANGUAGE SQL
@@ -176,7 +205,95 @@ BEGIN
 END;
 GRANT USAGE ON PROCEDURE CONFIG.unload_to_internal_stage(string,string,string,string,string) to application role ckan_app_role;
 
-CREATE OR REPLACE PROCEDURE CONFIG.SP_UPDATE_RESOURCES()
+CREATE OR REPLACE PROCEDURE CONFIG.SP_UPDATE_RESOURCES(tname string)
+RETURNS STRING
+LANGUAGE SQL
+EXECUTE AS OWNER
+AS
+DECLARE
+    TABLES RESULTSET DEFAULT(select config.add_quotes(database_name) db_name
+                                , config.add_quotes(schema_name) sch_name
+                                , config.add_quotes(table_name) tbl_name
+                                , db_name||'.'||sch_name||'.'||tbl_name FQTN 
+                                ,file_name
+                                ,extension
+                                ,compressed
+                            from core.resources_stream
+                            where table_name = :tname);
+                            
+BEGIN
+    FOR tbl IN tables DO
+      let ext string := tbl.extension;
+      let com string := tbl.compressed;
+      let fname string := tbl.file_name;
+      let tname string := tbl.tbl_name;
+      let fqtn string := tbl.FQTN;
+      //writes a file to an internal stage
+      
+      SYSTEM$LOG_INFO('Unloading file '||:fname||' to internal stage for table '||:fqtn);
+        
+      CALL config.unload_to_internal_stage(:ext,:com,:fname,:tname,:fqtn);
+    END FOR;
+    
+    let sql string := $$
+    UPDATE CORE.RESOURCES
+    SET presigned_url = purl
+        ,date_updated = CURRENT_TIMESTAMP()
+    FROM (
+            SELECT get_presigned_url(@core.published_extracts, replace(replace(IFNULL(file_name,table_name),'"',''),' ','_') ||'.'||extension || 
+      CASE compressed 
+        when 'brotli' then '.br'
+        when 'zstd' then '.zst'
+        when 'gzip' then '.gz'
+        when 'deflate' then '.zz'
+        when 'raw_deflate' then '.rzz'
+        when 'None' then ''
+        else '.'|| compressed
+      END,604800) purl
+            ,database_name
+            ,schema_name
+            ,table_name
+            FROM core.resources_stream 
+            WHERE METADATA$ACTION = 'INSERT'
+        ) r
+    WHERE r.database_name = RESOURCES.database_name
+    AND r.schema_name = RESOURCES.schema_name
+    AND r.table_name = RESOURCES.table_name$$;
+    SYSTEM$LOG_INFO('Add file information to file and update resource table: '|| :sql);
+    execute immediate(:sql);
+
+    SYSTEM$LOG_INFO('Make API call to CKAN and regenerate presigned URL');
+    INSERT INTO core.ckan_log
+      SELECT current_timestamp(),rs.package_id
+      ,parse_json(config.resource_update(rs.resource_id,rs.extension,rs.presigned_url)):id::string ext_resource_id
+      ,rs.table_name,'presigned url updated at CKAN'
+      FROM core.resources_stream rs
+      WHERE metadata$action='INSERT'
+      AND presigned_url is not null;
+
+    insert into core.ckan_log 
+    select current_timestamp(),package_id,resource_id,table_name,'SP_UPDATE_RESOURCES COMPLETE' 
+    from core.resources
+      where table_name = :tname;
+
+    return 'SUCCESS';
+    
+EXCEPTION
+  when other then
+    let err := object_construct('Error type', 'Other error',
+                            'SQLCODE', sqlcode,
+                            'SQLERRM', sqlerrm,
+                            'SQLSTATE', sqlstate);
+    SYSTEM$LOG_ERROR(:err);
+    insert into core.ckan_log select localtimestamp(), package_id, resource_id, table_name,:err::string 
+    from core.resources;
+    SYSTEM$LOG_ERROR(:err::string);
+    return 'FAILURE';
+END;
+
+GRANT USAGE ON PROCEDURE CONFIG.SP_UPDATE_RESOURCES(string) to application role ckan_app_role;
+
+CREATE OR REPLACE PROCEDURE CONFIG.SP_UPDATE_RESOURCES_ALL()
 RETURNS STRING
 LANGUAGE SQL
 EXECUTE AS OWNER
@@ -242,7 +359,7 @@ BEGIN
       AND presigned_url is not null;
 
     insert into core.ckan_log 
-    select current_timestamp(),package_id,resource_id,table_name,'SP_UPDATE_RESOURCES COMPLETE' 
+    select current_timestamp(),package_id,resource_id,table_name,'SP_UPDATE_RESOURCES_ALL COMPLETE' 
     from core.resources;
 
     return 'SUCCESS';
@@ -260,4 +377,5 @@ EXCEPTION
     return 'FAILURE';
 END;
 
-GRANT USAGE ON PROCEDURE CONFIG.SP_UPDATE_RESOURCES() to application role ckan_app_role;
+GRANT USAGE ON PROCEDURE CONFIG.SP_UPDATE_RESOURCES_ALL() to application role ckan_app_role;
+

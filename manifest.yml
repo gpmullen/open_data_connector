@@ -1,7 +1,7 @@
 manifest_version: 1
 version:
   name: CKAN_OPEN_DATA_CONNECTOR
-  label: "v1.1"
+  label: "v1.2"
   comment: "Change of Tasks and permission requests"
 artifacts:
   setup_script: scripts/setup.sql
@@ -11,6 +11,8 @@ artifacts:
 privileges:
   - EXECUTE TASK:
       description: "CKAN connector needs to update URLs on a weekly basis and as data is updated."
+  - EXECUTE MANAGED TASK:
+      description: "CKAN connector needs to update URLs on a set basis and as data is updated."
 configuration:
   trace_level: OFF
   log_level: ERROR

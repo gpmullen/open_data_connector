@@ -46,7 +46,7 @@ if btnRepublish:
         time.sleep(.1)
         try:
             session.sql("UPDATE CORE.RESOURCES SET DATE_UPDATED = CURRENT_TIMESTAMP()").collect()
-            result = session.sql("call CONFIG.SP_UPDATE_RESOURCES()").collect()[0][0]
+            result = session.sql("call CONFIG.SP_UPDATE_RESOURCES_ALL()").collect()[0][0]
             if result == 'FAILURE':
                 st.error(util.error_msg, icon='🚨')
             else: 

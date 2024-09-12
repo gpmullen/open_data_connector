@@ -15,3 +15,7 @@ st.info('Step 4: Review and track the status of jobs')
 if not permissions.get_held_account_privileges(["EXECUTE TASK"]):
     st.error("The app needs EXECUTE TASK permissions to regularly update data and links to CKAN.")
     permissions.request_account_privileges(["EXECUTE TASK"])
+
+if not permissions.get_held_account_privileges(["EXECUTE MANAGED TASK"]):
+    st.error("The app needs EXECUTE MANAGED TASK permissions to regularly update data and links to CKAN.")
+    permissions.request_account_privileges(["EXECUTE MANAGED TASK"])
