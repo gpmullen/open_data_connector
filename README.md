@@ -9,3 +9,6 @@ Review this article for [details](https://medium.com/@gabriel.mullen/california-
 * You have created a CKAN package and a CKAN resource to target. This allows Open Data Users to create the metadata within CKAN's UI. You do not need to populate the CKAN resource, but the connector will map the data to a specific resource-id that you choose through the connector ui.
 
 Once you have those items in place, you can configure the connector through the UI to connect and map a Snowflake table to your CKAN instance.
+
+## TODO
+* Update documentation and connector based on new product changes.
