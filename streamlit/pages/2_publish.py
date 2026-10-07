@@ -41,43 +41,28 @@ def getTables():
         return []
     
 def package_id_format(name) -> str:
-    return str(st.session_state.packages.filter(col('PACKAGE_NAME')== name).select('PACKAGE_ID').collect()[0][0])
+    return next(r['package_id'] for r in st.session_state.packages if r['package_name'] == name)
 
 def resource_id_format(resource_name) -> str:
-    return str(st.session_state.packages.filter(col('RESOURCE_NAME')== resource_name).select('RESOURCE_ID').collect()[0][0])
+    return next(r['resource_id'] for r in st.session_state.packages
+                if r['package_name'] == st.session_state.ddlPackages and r['resource_name'] == resource_name)
 
-@st.cache_data
 def getPackages(owner_org):
     if len(owner_org)>0:
         try:
-            with st.spinner("Getting your organization's packages..."):
-                time.sleep(.1)
-                st.session_state.packages = session.sql(f'''with cte as (select parse_json(config.package_search('{owner_org}')) data)            
-                    select ' ' PACKAGE_ID,' ' PACKAGE_NAME,' ' RESOURCE_ID,' ' RESOURCE_NAME
-                    union
-                    select 
-                    packages.value:id::string PACKAGE_ID
-                    , packages.value:name::string PACKAGE_NAME
-                    , resources.value:id::string RESOURCE_ID
-                    , resources.value:name::string RESOURCE_NAME
-                    from cte,
-                    lateral flatten(input => cte.data:results) packages,
-                    lateral flatten(input => packages.value:resources) resources
-                    ''')
-                return st.session_state.packages.select('PACKAGE_NAME').distinct().sort(col("PACKAGE_NAME"),ascending=True).collect()
+            #Cached in util; keep the rows in session_state for the id lookups above.
+            st.session_state.packages = util.ckan_packages(owner_org)
+            return [' '] + sorted({r['package_name'] for r in st.session_state.packages})
         except Exception as ex:
             logger.error(ex)
-            st.error(util.error_msg)
+            st.error(f'{ex}', icon='🚨')
             return []
     else:
         return []
 
-@st.cache_data
 def getResources(package_name):
     if package_name is not None and len(package_name.strip()) > 0:
-        with st.spinner("Getting resources..."):
-            time.sleep(.1)
-            return st.session_state.packages.filter((col('PACKAGE_NAME') == package_name) & (col("RESOURCE_NAME") != '')).select('RESOURCE_NAME').collect()        
+        return [r['resource_name'] for r in st.session_state.get('packages', []) if r['package_name'] == package_name]
     else:
         return []
     
@@ -106,23 +91,27 @@ def updateResource():
                                                 ,txtFileAlias
                                                 ,rdoOutputType
                                                 ,rdoCompress]])
-            #insert
-            session.sql('BEGIN TRANSACTION')
             dfControl.write.mode("append").save_as_table("{0}.{1}.{2}".format(RESOURCE_DB,RESOURCE_SCHEMA,RESOURCE_TABLE))
             #TASKS
-            result = session.sql(f"call CONFIG.SP_UPDATE_RESOURCES(\'{ddlTableToPublish}\')").collect()[0][0]
+            result = session.sql("call CONFIG.SP_UPDATE_RESOURCES(?)", params=[ddlTableToPublish]).collect()[0][0]
             if result == 'FAILURE':
+                #Undo the mapping so a failed publish does not leave a half configured resource behind.
+                remove_resource(ddlDatabaseToPublish, ddlSchemaToPublish, ddlTableToPublish)
                 st.error(util.error_msg, icon='🚨')        
-                session.sql('ROLLBACK')
             else:
-                session.sql('COMMIT TRANSACTION')
                 st.success('Saved!', icon="✅")
                 createTasks()
             
     except Exception as ex:
         logger.error(ex)
         st.error(util.error_msg, icon='🚨')        
-        session.sql('ROLLBACK')
+
+def remove_resource(db, schema, table):
+    try:
+        session.sql("DELETE FROM core.resources WHERE database_name = ? AND schema_name = ? AND table_name = ?",
+                    params=[db, schema, table]).collect()
+    except Exception as ex:
+        logger.error(ex)
 
 def loadTables():
     with st.spinner("Getting tables you have authorized access to..."):
@@ -142,23 +131,12 @@ def loadTables():
             RETURN TABLE(ret); 
         END;""").collect()
 
-@st.cache_data
 def getOrgs():
     try:  
-        with st.spinner("Getting your organizations..."):
-            time.sleep(.1)      
-            df = session.sql("""WITH cte AS (SELECT parse_json(config.get_orgs()) data)
-                                SELECT '' name
-                                UNION
-                                SELECT org.value:name::string name
-                                FROM cte,
-                                LATERAL FLATTEN(input => cte.data) org                                
-                                ORDER BY 1
-                                """).collect()
-            return df
+        return [''] + util.ckan_orgs()
     except Exception as ex:
         logger.error(ex)
-        st.error(util.error_msg)
+        st.error(f'{ex}', icon='🚨')
         return []
 
 def populateCompressionOptions():
@@ -174,7 +152,7 @@ def populateCompressionOptions():
 def createTasks():
 
         try:
-            _ = session.sql(f'call config.create_vwh_objects_tname(\'{ddlTableToPublish}\',\'{cron}\')').collect()
+            _ = session.sql('call config.create_vwh_objects_tname(?, ?)', params=[ddlTableToPublish, cron]).collect()
         except:
             st.error('Task Creation failed. Check that permissions are granted.')
             st.error(util.error_msg)
