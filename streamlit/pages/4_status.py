@@ -12,7 +12,7 @@ st.info('Review Request Log to API')
 
 try:
     logs = session.sql('select * from core.ckan_log order by 1 desc')
-    lde = st.experimental_data_editor(logs,num_rows="fixed",use_container_width=True)
+    lde = st.data_editor(logs,num_rows="fixed",use_container_width=True)
 except Exception as ex:
             logger.error(ex)
             st.error(util.error_msg, icon='🚨')
@@ -20,7 +20,7 @@ except Exception as ex:
 st.info('Tasks')
 try:
     tasks = session.sql(f"begin show tasks in {app_name}.core; let res RESULTSET := (select \"name\",\"warehouse\",\"schedule\",\"state\", IFF(\"condition\" IS NOT NULL,'Has Stream Condition','No Stream Condition') \"has_stream\" from table(result_scan(last_query_id()))); return table(res); end;").collect()
-    tde = st.experimental_data_editor(tasks,num_rows="fixed",use_container_width=True)
+    tde = st.data_editor(tasks,num_rows="fixed",use_container_width=True)
 except Exception as ex:
             logger.error(ex)
             st.error(util.error_msg, icon='🚨')
@@ -67,7 +67,7 @@ with col2:
 st.info('Streams')
 try:
     streams = session.sql(f"begin show streams in {app_name}.core; let res RESULTSET := (select \"name\",\"stale\",\"stale_after\",\"invalid_reason\" from table(result_scan(last_query_id()))); return table(res); end;").collect()
-    tde = st.experimental_data_editor(streams,num_rows="fixed",use_container_width=True)
+    tde = st.data_editor(streams,num_rows="fixed",use_container_width=True)
 except Exception as ex:
             logger.error(ex)
             st.error(util.error_msg, icon='🚨')            
