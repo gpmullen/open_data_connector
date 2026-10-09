@@ -12,6 +12,7 @@ import _snowflake
 import requests
 import json
 import logging
+from datetime import datetime, timezone
 session = requests.Session()
 logger = logging.getLogger("python_logger")
 
@@ -22,7 +23,10 @@ def resource_update(resource_id, extension, presigned_url):
     url = "https://{1}/api/action/resource_update"
     #Newer CKAN API tokens use Authorization; X-CKAN-API-Key is kept for older CKAN versions.
     headers = {{"Authorization": token, "X-CKAN-API-Key": token}}
-    json_options = {{'id':resource_id,'format':extension ,'url':presigned_url, 'clear_upload':'true'}}
+    #Only data publish paths call this UDF. URL-only renewal uses resource_patch instead.
+    last_modified = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec='seconds')
+    json_options = {{'id':resource_id,'format':extension ,'url':presigned_url,
+                     'clear_upload':'true', 'last_modified':last_modified}}
     response = session.post(url, headers = headers, json = json_options, timeout = 60)
     logger.info('End API call to update resource')
     body = response.json()

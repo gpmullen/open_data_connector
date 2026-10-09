@@ -70,13 +70,15 @@ import logging
 logger = logging.getLogger("python_logger")
 def create_functions(session, external_access_object, ckan_url):
   try:
-    files = ['get_orgs.sql','package_search.sql','resource_update.sql']
+    files = ['get_orgs.sql','package_search.sql','resource_update.sql','resource_renew_url.sql']
     for f in files:
       create_function(session,external_access_object,'/scripts/function_ddls/' + f, ckan_url)
     #Remember what the UDFs were built with so they can be rebuilt from the app UI.
     for k, v in (('eai_name', external_access_object), ('ckan_url', ckan_url)):
       session.sql("DELETE FROM core.app_config WHERE key = ?", params=[k]).collect()
       session.sql("INSERT INTO core.app_config SELECT ?, ?, current_timestamp()", params=[k, v]).collect()
+    #Renewal now depends on resource_renew_url, which must exist before creating its task.
+    session.sql("CALL config.ensure_url_renewal_task()").collect()
     return "Finalization complete"
   except Exception as ex:
         logger.error(ex)
@@ -408,6 +410,11 @@ LANGUAGE SQL
 EXECUTE AS OWNER
 AS
 BEGIN
+    SHOW USER FUNCTIONS LIKE 'RESOURCE_RENEW_URL' IN SCHEMA config;
+    LET has_renewal_udf INTEGER := (SELECT COUNT(*) FROM TABLE(RESULT_SCAN(LAST_QUERY_ID())));
+    IF (has_renewal_udf = 0) THEN
+        RETURN 'SKIPPED: external access not configured yet';
+    END IF;
     CALL CONFIG.create_vwh_objects('');
     SHOW TASKS LIKE 'REFRESH_URLS_TASK' IN SCHEMA core;
     LET legacy_count INTEGER := (SELECT COUNT(*) FROM TABLE(RESULT_SCAN(LAST_QUERY_ID())));
@@ -424,9 +431,6 @@ EXCEPTION
 END;
 
 GRANT USAGE ON PROCEDURE CONFIG.ensure_url_renewal_task() to application role ckan_app_role;
-
---Never fail install/upgrade over this; the procedure handles its own errors.
-CALL CONFIG.ensure_url_renewal_task();
 
 --Task DDL is not changed by an app upgrade, so rebuild one refresh task per published table from core.resources with the
 --current code, keep each table's schedule, and drop tasks that do not belong to a published table (e.g. the unprefixed
@@ -491,8 +495,6 @@ END;
 
 GRANT USAGE ON PROCEDURE CONFIG.redeploy_tasks() to application role ckan_app_role;
 
-CALL CONFIG.redeploy_tasks();
-
 --The CKAN UDFs are created at runtime by FINALIZE, so an upgrade does not change them. Rebuild them with the stored
 --integration name and host so every upgrade ships the current UDF code. Skipped on new installs (no UDFs yet).
 CREATE OR REPLACE PROCEDURE CONFIG.rebuild_ckan_functions()
@@ -534,4 +536,6 @@ END;
 GRANT USAGE ON PROCEDURE CONFIG.rebuild_ckan_functions() to application role ckan_app_role;
 
 CALL CONFIG.rebuild_ckan_functions();
+--Build the renewal UDF before rebuilding tasks that depend on it.
+CALL CONFIG.redeploy_tasks();
 
